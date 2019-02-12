@@ -1,0 +1,128 @@
+<html>
+
+<head>
+  <title>DOM megamorphic access</title>
+</head>
+
+<body>
+  This perf tests measures the speed of monomorphic (inline-cache hit) vs megamorphic (megamorphic cache hit and miss)
+  read on both javascript as well as DOM objects.
+
+  Further reading:
+  <ul>
+    <li><a href="https://mrale.ph/blog/2015/01/11/whats-up-with-monomorphism.html">What's up with monomorphism?</a></li>
+    <li><a href="https://richardartoul.github.io/jekyll/update/2015/04/26/hidden-classes.html">Javascript Hidden Classes
+        and Inline Caching in V8</a></li>
+    <li><a href="https://bugs.chromium.org/p/v8/issues/detail?id=8820">Issue 8820: Improve native accessor performance
+        (for DOM accessors)</a></li>
+  </ul>
+
+  <hr>
+  <pre id="domConsole"></pre>
+  <pre id="pre"></pre>
+</body>
+<script>
+  class Foo {
+    increment(value) { return value; }
+  }
+
+  const TAGS = "TD TH FORM INPUT A AREA BUTTON LABEL LEGEND TEXTAREA CAPTION APPLET IFRAME IMG OBJECT TABLE HR DIV H1 H2 H3 H4 H5 H6 P COL COLGROUP TBODY TFOOT THEAD TR BODY LINK SCRIPT BLOCKQUOTE Q DEL INS All elements but BASE BASEFONT HEAD HTML META PARAM STYLE TITLE BR FONT FRAMESET DIR DL MENU OL UL BDO FRAME OPTGROUP OPTION SELECT MAP ISINDEX LI PRE".split(' ');
+  const ITERATIONS = 1000;
+  const ARRAY_SIZE = 10000;
+  // Array of Foo instances. Since all of the instance are of same type / shape the read will be monomorphic and produce an inline cache hit.
+  const FOO_MONO = [];
+  // Array of Foo subclass instances. Since all of the instance are of different type / shape the read will be megamorphic.
+  // Because the types don't repeat the megamorphic cache will miss as well. 
+  const FOO_MEGA = [];
+  // Array of <div> elements. Since all instances are of same type / shape the read will be monomorphic and produce an inline cache hit.
+  const DOM_MONO = []
+  // Array of different DOM elements. Since all instances are of different type / shape the read will be megamorphic.
+  // However because there are only so many different types of DOM types, the megamorphic cache will mostly have cache hits.
+  const DOM_MEGA = [];
+  // Fill in the arrays with same number of items.
+  for (let i = 0; i < ARRAY_SIZE; i++) {
+    FOO_MONO.push(new Foo());
+    const SubFoo = class SubFoo extends Foo { };
+    FOO_MEGA.push(new SubFoo());
+
+    DOM_MONO.push(document.createElement('div'));
+    DOM_MEGA.push(document.createElement(TAGS[i % TAGS.length]));
+  }
+  function monoFn(foo) {
+    // This read will be inline cached because `foo` is always `Foo`
+    return foo.increment(1);
+  }
+  function megaFn(foo) {
+    // This read is megamorphic because `foo` is always a different shape. 
+    // Because we never see the same shape twice it will result in megamorphic cache misses.
+    return foo.increment(1);
+  }
+  const INCREMENT = Foo.prototype.increment;
+  function callFn(foo) {
+    // Here the `call` is always on the same function which makes it monomorphic even though `foo` is different shapes.
+    return INCREMENT.call(foo);
+  }
+
+  function domMonoFn(node) {
+    // This read will be inline cached because `node` is always `<div>`.
+    return node.firstChild;
+  }
+  function domMegaFn(node) {
+    // This read is megamorphic because `node` is always a different shape. 
+    // Because there are only so many DOM types this should result in megamorphic cache hits.
+    return node.firstChild;
+  }
+  const DOM_GETTER = Object.getOwnPropertyDescriptor(Node.prototype, 'firstChild').get;
+  function domCallFn(node) {
+    // Here the `call` is always on the same function which makes it monomorphic even though `node` is different shapes.
+    return DOM_GETTER.call(node);
+  }
+
+  function profile(name, array, fn, scale) {
+    const start = new Date().getTime();
+    for (let j = 0; j < ITERATIONS; j++) {
+      for (let i = 0; i < array.length; i++) {
+        fn(array[i]);
+      }
+    }
+    const end = new Date().getTime();
+    const time = (end - start) / ITERATIONS;
+    const ratio = time / scale;
+    domConsole.textContent += `${name}: ${time} ms per ${ITERATIONS}\n`;
+    return ratio;
+  }
+
+  function warmUp(array, fn) {
+    for (let j = 0; j < 100; j++) {
+      for (let i = 0; i < array.length; i++) {
+        fn(array[i]);
+      }
+    }
+  }
+
+  function frmt(value) {
+    return Math.round(value * 10) / 10;
+  }
+
+  warmUp(FOO_MONO, monoFn);
+  warmUp(FOO_MEGA, megaFn);
+  warmUp(DOM_MONO, domMonoFn);
+  warmUp(DOM_MEGA, domMegaFn);
+  warmUp(DOM_MEGA, domCallFn);
+
+  const monoSpeed = profile('OBJ_mono', FOO_MONO, monoFn, 1);
+  const megaSpeed = profile('OBJ_mega', FOO_MEGA, megaFn, monoSpeed);
+  const callSpeed = profile('OBJ_call', FOO_MEGA, callFn, monoSpeed);
+  pre.textContent += `In pure JS Object the cost of a megamorphic cache miss ${frmt(megaSpeed)}x slower than inline cache.\n`;
+  pre.textContent += `In pure JS Object invoking cached method on megamorphic object is ${frmt(callSpeed)}x slower than inline cache hit.\n`;
+
+  const domMonoSpeed = profile('DOM_mono', DOM_MONO, domMonoFn, 1);
+  const domMegaSpeed = profile('DOM_mega', DOM_MEGA, domMegaFn, domMonoSpeed);
+  const domCallSpeed = profile('DOM_call', DOM_MEGA, domCallFn, domMonoSpeed);
+  pre.textContent += `In DOM access a megamorphic cache read ${frmt(domMegaSpeed)}x slower than inline cache hit.\n`;
+  pre.textContent += `In DOM access using cached method on megamorphic object is ${frmt(domCallSpeed)}x slower than inline cache hit.\n`;
+
+
+</script>
+
+</html>
