@@ -2,11 +2,37 @@
 
 <head>
   <title>DOM megamorphic access</title>
+  <style>
+    .historic {
+      color: gray
+    }
+  </style>
 </head>
 
 <body>
   This perf tests measures the speed of monomorphic (inline-cache hit) vs megamorphic (megamorphic cache hit and miss)
   read on both javascript as well as DOM objects.
+
+  <p>
+    DOM access is inherently megamorphic. This perf-tests attempts to prove that caching the methods on the DOM and
+    invoking them using <tt>.call()</tt> is faster than using the megamorphic property lookup.
+  </p>
+
+  <pre>
+    // Cache the getter only once.
+    const Node_parentNode_getter = Object.getOwnPropertyDescriptor(Node.prototype, 'parentNode').get;
+
+    Node_parentNode_getter.call(domNode); // Is the fastest way to access DOM.
+    domNode.parentNode; // is megamorphic and hence slower than the line above.
+  </pre>
+
+  <p>This approach seems to hold in all browser (except for chrome due to <a
+      href="https://bugs.chromium.org/p/v8/issues/detail?id=8820">issue 8820</a>).
+  </p>
+
+  <p>
+
+  </p>
 
   <p>
     Further reading:
@@ -22,8 +48,66 @@
   </p>
 
   <hr>
-  <pre id="domConsole"></pre>
+  <pre id="domConsole">profiling...</pre>
   <pre id="pre"></pre>
+  <table border="1">
+    <tr>
+      <th>Browser</th>
+      <th><tt>OBJ_mega/OBJ_mono</tt></th>
+      <th><tt>OBJ_call/OBJ_mono</tt></th>
+      <th><tt>DOM_mega/DOM_mono</tt></th>
+      <th><tt>DOM_call/DOM_mono</tt></th>
+    </tr>
+    <tr>
+      <td id="currentAgent">computing...</td>
+      <td><tt id="objMegaRatio">computing...</tt></td>
+      <td><tt id="objCallRatio">computing...</tt></td>
+      <td><tt id="domMegaRatio">computing...</tt></td>
+      <td><tt id="domCallRatio">computing...</tt></td>
+    </tr>
+    <tr class="historic">
+      <td colspan="5"> -- historic for comparison data -- </td>
+    </tr>
+    <tr class="historic">
+      <td>Chrome/72.0.3626.96 Safari/537.36</td>
+      <td><tt>181.7</tt></td>
+      <td><tt>5.2</tt></td>
+      <td><tt>2.9</tt></td>
+      <td><tt>3.5</tt></td>
+    </tr>
+    <tr class="historic">
+      <td>Gecko/20100101 Firefox/64.0</td>
+      <td><tt>13</tt></td>
+      <td><tt>0.6</tt></td>
+      <td><tt>6.6</tt></td>
+      <td><tt>1.2</tt></td>
+    </tr>
+    <tr class="historic">
+      <td>Version/12.2 Safari/605.1.15</td>
+      <td><tt>24.4</tt></td>
+      <td><tt>2</tt></td>
+      <td><tt>9.1</tt></td>
+      <td><tt>3</tt></td>
+    </tr>
+  </table>
+
+  <p></p>
+  LEGEND:
+  <ul>
+    <li><tt>OBJ_*</tt> Measurement done on regular Javascript object.</li>
+    <li><tt>DOM_*</tt> Measurement done on DOM Element. (Because DOM elements are C++ so different rules may apply)</li>
+    <li><tt>*_mono</tt>: Cost of doing a monomorphic property access <tt>obj.increment(1)</tt> where <tt>obj</tt> always
+      has same shape.</li>
+    <li><tt>*_mega</tt>: Cost of doing a megamorphic property access <tt>obj.increment(1)</tt> where <tt>obj</tt> always
+      has different shape.</li>
+    <li><tt>*_call</tt>: Cost of doing a property access using <tt>Foo.prototype.increment.call(instance)</tt> where
+      <tt>obj</tt> always has different shape.</li>
+    <li><tt>*_mega/*-mono</tt>: Ratio of how much slower the megamorphic case is than monomorphic (inline cache)
+    </li>
+    <li><tt>*_mega/*-mono</tt>: Ratio of how much slower the megamorphic case is than monomorphic (inline cache)
+    </li>
+  </ul>
+
 </body>
 <script>
   class Foo {
@@ -31,7 +115,7 @@
   }
 
   const TAGS = "TD TH FORM INPUT A AREA BUTTON LABEL LEGEND TEXTAREA CAPTION APPLET IFRAME IMG OBJECT TABLE HR DIV H1 H2 H3 H4 H5 H6 P COL COLGROUP TBODY TFOOT THEAD TR BODY LINK SCRIPT BLOCKQUOTE Q DEL INS All elements but BASE BASEFONT HEAD HTML META PARAM STYLE TITLE BR FONT FRAMESET DIR DL MENU OL UL BDO FRAME OPTGROUP OPTION SELECT MAP ISINDEX LI PRE".split(' ');
-  const ITERATIONS = 1000;
+  const ITERATIONS = 2000;
   const ARRAY_SIZE = 10000;
   // Array of Foo instances. Since all of the instance are of same type / shape the read will be monomorphic and produce an inline cache hit.
   const FOO_MONO = [];
@@ -97,7 +181,8 @@
   }
 
   function warmUp(array, fn) {
-    for (let j = 0; j < 100; j++) {
+    const warmupIterations = ITERATIONS / 2;
+    for (let j = 0; j < warmupIterations; j++) {
       for (let i = 0; i < array.length; i++) {
         fn(array[i]);
       }
@@ -108,24 +193,24 @@
     return Math.round(value * 10) / 10;
   }
 
-  warmUp(FOO_MONO, monoFn);
-  warmUp(FOO_MEGA, megaFn);
-  warmUp(DOM_MONO, domMonoFn);
-  warmUp(DOM_MEGA, domMegaFn);
-  warmUp(DOM_MEGA, domCallFn);
+  setTimeout(() => {
+    domConsole.textContent = '';
+    warmUp(FOO_MONO, monoFn);
+    warmUp(FOO_MEGA, megaFn);
+    warmUp(DOM_MONO, domMonoFn);
+    warmUp(DOM_MEGA, domMegaFn);
+    warmUp(DOM_MEGA, domCallFn);
 
-  const monoSpeed = profile('OBJ_mono', FOO_MONO, monoFn, 1);
-  const megaSpeed = profile('OBJ_mega', FOO_MEGA, megaFn, monoSpeed);
-  const callSpeed = profile('OBJ_call', FOO_MEGA, callFn, monoSpeed);
-  pre.textContent += `In pure JS Object the cost of a megamorphic cache miss ${frmt(megaSpeed)}x slower than inline cache.\n`;
-  pre.textContent += `In pure JS Object invoking cached method on megamorphic object is ${frmt(callSpeed)}x slower than inline cache hit.\n`;
+    currentAgent.textContent = navigator.userAgent.split(') ').pop();
 
-  const domMonoSpeed = profile('DOM_mono', DOM_MONO, domMonoFn, 1);
-  const domMegaSpeed = profile('DOM_mega', DOM_MEGA, domMegaFn, domMonoSpeed);
-  const domCallSpeed = profile('DOM_call', DOM_MEGA, domCallFn, domMonoSpeed);
-  pre.textContent += `In DOM access a megamorphic cache read ${frmt(domMegaSpeed)}x slower than inline cache hit.\n`;
-  pre.textContent += `In DOM access using cached method on megamorphic object is ${frmt(domCallSpeed)}x slower than inline cache hit.\n`;
+    const monoSpeed = profile('OBJ_mono', FOO_MONO, monoFn, 1);
+    objMegaRatio.textContent = frmt(profile('OBJ_mega', FOO_MEGA, megaFn, monoSpeed));
+    objCallRatio.textContent = frmt(profile('OBJ_call', FOO_MEGA, callFn, monoSpeed));
 
+    const domMonoSpeed = profile('DOM_mono', DOM_MONO, domMonoFn, 1);
+    domMegaRatio.textContent = frmt(profile('DOM_mega', DOM_MEGA, domMegaFn, domMonoSpeed));
+    domCallRatio.textContent = frmt(profile('DOM_call', DOM_MEGA, domCallFn, domMonoSpeed));
+  }, 2500);
 
 </script>
 
